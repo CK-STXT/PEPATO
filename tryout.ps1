@@ -1,4 +1,11 @@
-[System.Reflection.Assembly]::LoadWithPartialName('presentationframework')
+# Ensure PowerShell is running in STA mode
+if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne "STA") {
+    Start-Process PowerShell -ArgumentList "-sta -File `"$PSCommandPath`"" -NoNewWindow -Wait
+    exit
+}
+
+# Load WPF Assembly
+Add-Type -AssemblyName PresentationFramework
 
 # XAML for WPF GUI
 [xml]$XAML = @"
@@ -17,45 +24,71 @@
 $reader = (New-Object System.Xml.XmlNodeReader $XAML)
 $window = [Windows.Markup.XamlReader]::Load($reader)
 
-# Define button actions
+# Validate Window Loading
+if ($null -eq $window) {
+    Write-Host "Failed to load the XAML UI. Check your XAML syntax."
+    exit
+}
+
+# Find Controls
 $btnFirewallSnapshotBefore = $window.FindName("btnFirewallSnapshotBefore")
 $btnFirewallSnapshotAfter = $window.FindName("btnFirewallSnapshotAfter")
 $btnCompareFirewall = $window.FindName("btnCompareFirewall")
 $txtOutput = $window.FindName("txtOutput")
 
-# Firewall Snapshot Function (Before Installation)
+# Validate UI Element Existence
+if ($null -eq $btnFirewallSnapshotBefore -or $null -eq $btnFirewallSnapshotAfter -or $null -eq $btnCompareFirewall -or $null -eq $txtOutput) {
+    Write-Host "One or more UI elements were not found. Check the XAML control names."
+    exit
+}
+
+# Define File Paths
+$snapshotBeforePath = "$env:TEMP\FirewallSnapshot_Before.txt"
+$snapshotAfterPath = "$env:TEMP\FirewallSnapshot_After.txt"
+$diffPath = "$env:TEMP\Firewall_Differences.txt"
+
+# Function: Take Firewall Snapshot (Before)
 function Take-FirewallSnapshotBefore {
-    netsh advfirewall firewall show rule name=all | Out-File -FilePath "$(pwd)\FirewallSnapshot_Before.txt" -Encoding UTF8
-    $txtOutput.Text = "Firewall snapshot (before) saved!"
+    param([System.Windows.Controls.TextBox]$OutputBox)
+    netsh advfirewall firewall show rule name=all | Out-File -FilePath $snapshotBeforePath -Encoding UTF8
+    $OutputBox.Text = "Firewall snapshot (before) saved to: $snapshotBeforePath"
 }
 
-# Firewall Snapshot Function (After Installation)
+# Function: Take Firewall Snapshot (After)
 function Take-FirewallSnapshotAfter {
-    netsh advfirewall firewall show rule name=all | Out-File -FilePath "$(pwd)\FirewallSnapshot_After.txt" -Encoding UTF8
-    $txtOutput.Text = "Firewall snapshot (after) saved!"
+    param([System.Windows.Controls.TextBox]$OutputBox)
+    netsh advfirewall firewall show rule name=all | Out-File -FilePath $snapshotAfterPath -Encoding UTF8
+    $OutputBox.Text = "Firewall snapshot (after) saved to: $snapshotAfterPath"
 }
 
-# Compare Firewall Snapshots
+# Function: Compare Snapshots
 function Compare-FirewallSnapshots {
-    if (!(Test-Path "$(pwd)\FirewallSnapshot_Before.txt") -or !(Test-Path "$(pwd)\FirewallSnapshot_After.txt")) {
-        $txtOutput.Text = "Snapshots not found! Take both snapshots first."
+    param([System.Windows.Controls.TextBox]$OutputBox)
+    if (!(Test-Path $snapshotBeforePath) -or !(Test-Path $snapshotAfterPath)) {
+        $OutputBox.Text = "Snapshots not found! Take both snapshots first."
         return
     }
-    $before = Get-Content "$(pwd)\FirewallSnapshot_Before.txt"
-    $after = Get-Content "$(pwd)\FirewallSnapshot_After.txt"
+    $before = Get-Content $snapshotBeforePath
+    $after = Get-Content $snapshotAfterPath
     $diff = Compare-Object -ReferenceObject $before -DifferenceObject $after
     if ($diff) {
-        $diff | Out-File -FilePath "$(pwd)\Firewall_Differences.txt" -Encoding UTF8
-        $txtOutput.Text = "Differences saved to Firewall_Differences.txt"
+        $diff | Out-File -FilePath $diffPath -Encoding UTF8
+        $OutputBox.Text = "Differences saved to: $diffPath"
     } else {
-        $txtOutput.Text = "No differences found."
+        $OutputBox.Text = "No differences found."
     }
 }
 
 # Button Events
-$btnFirewallSnapshotBefore.Add_Click({ Take-FirewallSnapshotBefore })
-$btnFirewallSnapshotAfter.Add_Click({ Take-FirewallSnapshotAfter })
-$btnCompareFirewall.Add_Click({ Compare-FirewallSnapshots })
+$btnFirewallSnapshotBefore.Add_Click({
+    Take-FirewallSnapshotBefore -OutputBox $txtOutput
+})
+$btnFirewallSnapshotAfter.Add_Click({
+    Take-FirewallSnapshotAfter -OutputBox $txtOutput
+})
+$btnCompareFirewall.Add_Click({
+    Compare-FirewallSnapshots -OutputBox $txtOutput
+})
 
 # Show Window
 $window.ShowDialog()
