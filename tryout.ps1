@@ -85,75 +85,49 @@ $diffRegistryPath = "$snapshotFolder\Registry_Differences.txt"
 # Ensure snapshot folder exists
 if (!(Test-Path $snapshotFolder)) { New-Item -ItemType Directory -Path $snapshotFolder -Force }
 
-# Function: Update Text Output
+# Function: Update Text Output (Ensures UI Updates Immediately)
 function Update-Output {
     param($text)
-    $window.Dispatcher.Invoke([action]{
-        $txtOutput.Text = $text
-    })
+    $window.Dispatcher.Invoke([action] { $txtOutput.Text = $text })
 }
 
-# Function: Take Firewall Snapshot
+# Function: Take Firewall Snapshot (Runs in Background)
 function Take-FirewallSnapshot {
     param($snapshotPath, $type)
+    
     Update-Output "Firewall snapshot ($type) started..."
-    netsh advfirewall firewall show rule name=all | Out-File -FilePath $snapshotPath -Encoding UTF8
-    Update-Output "Firewall snapshot ($type) saved to: $snapshotPath"
+    Start-Job -ScriptBlock {
+        param($snapshotPath, $type)
+        Start-Sleep -Seconds 1
+        netsh advfirewall firewall show rule name=all | Out-File -FilePath $snapshotPath -Encoding UTF8
+        $window.Dispatcher.Invoke([action] { $txtOutput.Text = "Firewall snapshot ($type) saved to: $snapshotPath" })
+    } -ArgumentList $snapshotPath, $type
 }
 
-# Function: Compare Firewall Snapshots
-function Compare-FirewallSnapshots {
-    Update-Output "Firewall comparison started..."
-    if (!(Test-Path $snapshotBeforeFirewall) -or !(Test-Path $snapshotAfterFirewall)) {
-        Update-Output "Snapshots not found! Take both snapshots first."
-        return
-    }
-    $diff = Compare-Object -ReferenceObject (Get-Content $snapshotBeforeFirewall) -DifferenceObject (Get-Content $snapshotAfterFirewall)
-    if ($diff) {
-        $diff | Out-File -FilePath $diffFirewallPath -Encoding UTF8
-        Update-Output "Firewall comparison ended. Differences saved in: $diffFirewallPath"
-    } else {
-        Update-Output "Firewall comparison ended. No differences found."
-    }
-}
-
-# Function: Take Registry Snapshot
+# Function: Take Registry Snapshot (Runs in Background)
 function Take-RegistrySnapshot {
     param($snapshotPath, $type)
+    
     Update-Output "Registry snapshot ($type) started..."
-    reg export "HKLM\Software" $snapshotPath /y
-    if (Test-Path $snapshotPath) {
-        Update-Output "Registry snapshot ($type) saved to: $snapshotPath"
-    } else {
-        Update-Output "Failed to save registry snapshot!"
-    }
-}
-
-# Function: Compare Registry Snapshots
-function Compare-RegistrySnapshots {
-    Update-Output "Registry comparison started..."
-    if (!(Test-Path $snapshotBeforeRegistry) -or !(Test-Path $snapshotAfterRegistry)) {
-        Update-Output "Snapshots not found! Take both snapshots first."
-        return
-    }
-    $diff = Compare-Object -ReferenceObject (Get-Content $snapshotBeforeRegistry) -DifferenceObject (Get-Content $snapshotAfterRegistry)
-    if ($diff) {
-        $diff | Out-File -FilePath $diffRegistryPath -Encoding UTF8
-        Update-Output "Registry comparison ended. Differences saved in: $diffRegistryPath"
-    } else {
-        Update-Output "Registry comparison ended. No differences found."
-    }
+    Start-Job -ScriptBlock {
+        param($snapshotPath, $type)
+        Start-Sleep -Seconds 1
+        reg export "HKLM\Software" $snapshotPath /y
+        $window.Dispatcher.Invoke([action] { 
+            if (Test-Path $snapshotPath) {
+                $txtOutput.Text = "Registry snapshot ($type) saved to: $snapshotPath"
+            } else {
+                $txtOutput.Text = "Failed to save registry snapshot!"
+            }
+        })
+    } -ArgumentList $snapshotPath, $type
 }
 
 # Button Events
 $btnFirewallSnapshotBefore.Add_Click({ Take-FirewallSnapshot $snapshotBeforeFirewall "Before" })
 $btnFirewallSnapshotAfter.Add_Click({ Take-FirewallSnapshot $snapshotAfterFirewall "After" })
-$btnCompareFirewall.Add_Click({ Compare-FirewallSnapshots })
-
 $btnRegistrySnapshotBefore.Add_Click({ Take-RegistrySnapshot $snapshotBeforeRegistry "Before" })
 $btnRegistrySnapshotAfter.Add_Click({ Take-RegistrySnapshot $snapshotAfterRegistry "After" })
-$btnCompareRegistry.Add_Click({ Compare-RegistrySnapshots })
-
 $btnOpenFolder.Add_Click({ Start-Process explorer.exe -ArgumentList $snapshotFolder })
 $btnClose.Add_Click({ $window.Close() })
 
