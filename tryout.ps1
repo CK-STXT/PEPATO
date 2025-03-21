@@ -4,81 +4,88 @@ if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne "STA") {
     exit
 }
 
-# Load WPF assembly
+# Load WPF
 Add-Type -AssemblyName PresentationFramework
 
-# Check for Administrator rights
+# Admin check
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")
 if (-not $isAdmin) {
     [System.Windows.MessageBox]::Show("This script must be run as administrator!", "Error", "OK", "Error")
     exit
 }
 
-# Setup base folder and timestamp
+# Output folder & timestamp
 $baseFolder = "C:\\temp\\PrePackTool"
 if (!(Test-Path $baseFolder)) { New-Item -ItemType Directory -Path $baseFolder -Force }
 $timestamp = Get-Date -Format "dd_MM_yy"
 
-# Define snapshot paths
+# Snapshot paths
 $snapshotBeforeFirewall = "$baseFolder\FirewallSnapshot_Before_$timestamp.txt"
-$snapshotAfterFirewall = "$baseFolder\FirewallSnapshot_After_$timestamp.txt"
+$snapshotAfterFirewall  = "$baseFolder\FirewallSnapshot_After_$timestamp.txt"
 $snapshotBeforeRegistry = "$baseFolder\RegistrySnapshot_Before_$timestamp.reg"
-$snapshotAfterRegistry = "$baseFolder\RegistrySnapshot_After_$timestamp.reg"
+$snapshotAfterRegistry  = "$baseFolder\RegistrySnapshot_After_$timestamp.reg"
 
-# GUI layout (XAML)
+# XAML GUI layout
 [xml]$XAML = @"
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Title="PerPac Tool (Running as SYSTEM)" Height="850" Width="600" ResizeMode="NoResize">
-    <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-
-        <GroupBox Header="Firewall" Grid.Row="0" Margin="10">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Title="🛠 PerPac Tool" Height="850" Width="650" ResizeMode="CanResizeWithGrip" Background="#1e1e1e" Foreground="White">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#333"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Margin" Value="5"/>
+            <Setter Property="Padding" Value="5,2"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="#2d2d30"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#555"/>
+            <Setter Property="Margin" Value="5"/>
+        </Style>
+        <Style TargetType="GroupBox">
+            <Setter Property="Margin" Value="10"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+    </Window.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="10">
+            <GroupBox Header="🔥 Firewall Rules Snapshot">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <Button Name="FirewallSnapshotBefore" Content="Snapshot Before" Width="150"/>
+                    <Button Name="FirewallSnapshotAfter" Content="Snapshot After" Width="150"/>
+                    <Button Name="FirewallCompare" Content="Compare" Width="120"/>
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="🧠 Registry Snapshot">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <Button Name="RegistrySnapshotBefore" Content="Snapshot Before" Width="150"/>
+                    <Button Name="RegistrySnapshotAfter" Content="Snapshot After" Width="150"/>
+                    <Button Name="RegistryCompare" Content="Compare" Width="120"/>
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="📦 EXE Installer Handling">
+                <StackPanel Orientation="Vertical">
+                    <Button Name="SelectExe" Content="Select Installer (EXE)" Width="200" HorizontalAlignment="Center"/>
+                    <TextBox Name="ExePath" Height="25" IsReadOnly="True"/>
+                    <Button Name="RunInstaller" Content="Run Installer (As SYSTEM)" Width="200" HorizontalAlignment="Center"/>
+                    <Button Name="FindMSI" Content="Find Extracted MSIs" Width="200" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="🧪 MSI Analysis">
+                <StackPanel Orientation="Vertical">
+                    <Button Name="SelectMSI" Content="Select MSI" Width="200" HorizontalAlignment="Center"/>
+                    <TextBox Name="MSIPath" Height="25" IsReadOnly="True"/>
+                    <Button Name="AnalyzeMSI" Content="Analyze MSI" Width="200" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="📋 Output Log">
+                <TextBox Name="Output" Height="150" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
+            </GroupBox>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                <Button Name="FirewallSnapshotBefore" Content="Snapshot Before" Width="120" Margin="5"/>
-                <Button Name="FirewallSnapshotAfter" Content="Snapshot After" Width="120" Margin="5"/>
-                <Button Name="FirewallCompare" Content="Compare" Width="100" Margin="5"/>
+                <Button Name="OpenFolder" Content="Open Folder" Width="120"/>
+                <Button Name="Close" Content="Close" Width="120"/>
             </StackPanel>
-        </GroupBox>
-
-        <GroupBox Header="Registry" Grid.Row="1" Margin="10">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                <Button Name="RegistrySnapshotBefore" Content="Snapshot Before" Width="120" Margin="5"/>
-                <Button Name="RegistrySnapshotAfter" Content="Snapshot After" Width="120" Margin="5"/>
-                <Button Name="RegistryCompare" Content="Compare" Width="100" Margin="5"/>
-            </StackPanel>
-        </GroupBox>
-
-        <GroupBox Header="Installer Handling" Grid.Row="2" Margin="10">
-            <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
-                <Button Name="SelectExe" Content="Select Installer (EXE)" Width="200" Margin="5"/>
-                <TextBox Name="ExePath" Width="450" Height="25" Margin="5" IsReadOnly="True"/>
-                <Button Name="RunInstaller" Content="Run Installer (As SYSTEM)" Width="200" Margin="5"/>
-                <Button Name="FindMSI" Content="Find Extracted MSIs" Width="200" Margin="5"/>
-            </StackPanel>
-        </GroupBox>
-
-        <GroupBox Header="MSI Analysis" Grid.Row="3" Margin="10">
-            <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
-                <Button Name="SelectMSI" Content="Select MSI" Width="200" Margin="5"/>
-                <TextBox Name="MSIPath" Width="450" Height="25" Margin="5" IsReadOnly="True"/>
-                <Button Name="AnalyzeMSI" Content="Analyze MSI" Width="200" Margin="5"/>
-            </StackPanel>
-        </GroupBox>
-
-        <TextBox Name="Output" Width="550" Height="150" Margin="10" Grid.Row="4" IsReadOnly="True" VerticalAlignment="Top" HorizontalAlignment="Center" TextWrapping="Wrap"/>
-
-        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Center">
-            <Button Name="OpenFolder" Content="Open Folder" Width="120" Margin="10"/>
-            <Button Name="Close" Content="Close" Width="120" Margin="10"/>
         </StackPanel>
-    </Grid>
+    </ScrollViewer>
 </Window>
 "@
 
@@ -86,7 +93,7 @@ $snapshotAfterRegistry = "$baseFolder\RegistrySnapshot_After_$timestamp.reg"
 $reader = (New-Object System.Xml.XmlNodeReader $XAML)
 $window = [Windows.Markup.XamlReader]::Load($reader)
 
-# Get UI elements
+# Map controls
 $elements = @{
     FirewallSnapshotBefore = $window.FindName("FirewallSnapshotBefore")
     FirewallSnapshotAfter  = $window.FindName("FirewallSnapshotAfter")
@@ -127,9 +134,7 @@ function Compare-Snapshots($beforePath, $afterPath, $label) {
         Update-Output "$label snapshots not found!"
         return
     }
-    $before = Get-Content $beforePath
-    $after = Get-Content $afterPath
-    $diff = Compare-Object $before $after
+    $diff = Compare-Object (Get-Content $beforePath) (Get-Content $afterPath)
     if ($diff) {
         $diffPath = "$baseFolder\${label}_Differences_$timestamp.txt"
         $diff | Out-File -FilePath $diffPath -Encoding UTF8
@@ -152,39 +157,42 @@ function Analyze-MSI {
         Update-Output "Please select an MSI file first."
         return
     }
-    $msiPath = $elements.MSIPath.Text
-    Update-Output "Analyzing MSI: $msiPath"
     try {
+        $msiPath = $elements.MSIPath.Text
         $installer = New-Object -ComObject WindowsInstaller.Installer
         $db = $installer.OpenDatabase($msiPath, 0)
+
         $props = @("ProductCode", "REBOOT", "ALLUSERS")
         $results = foreach ($p in $props) {
-            $v = $db.OpenView("SELECT Value FROM Property WHERE Property='$p'")
-            $v.Execute()
-            $r = $v.Fetch()
-            $v.Close()
-            if ($r) { "${p}: $($r.StringData(1))" } else { "${p}: Not Found" }
+            $view = $db.OpenView("SELECT Value FROM Property WHERE Property='$p'")
+            $view.Execute()
+            $record = $view.Fetch()
+            $view.Close()
+            if ($record) { "${p}: $($record.StringData(1))" } else { "${p}: Not Found" }
         }
+
         $shortcuts = @()
         $view = $db.OpenView("SELECT Shortcut, Target, Directory_ FROM Shortcut")
         $view.Execute()
         while ($rec = $view.Fetch()) {
-            $shortcuts += "Shortcut: $($rec.StringData(1)) → Target: $($rec.StringData(2)) (Dir: $($rec.StringData(3)))"
+            $shortcuts += "Shortcut: $($rec.StringData(1)) → $($rec.StringData(2)) (Dir: $($rec.StringData(3)))"
         }
         $view.Close()
-        $out = $results -join "`n"
+
+        $output = ($results -join "`n")
         if ($shortcuts.Count -gt 0) {
-            $out += "`n`nShortcuts:`n" + ($shortcuts -join "`n")
+            $output += "`n`nShortcuts:`n" + ($shortcuts -join "`n")
         } else {
-            $out += "`n`nNo shortcuts found."
+            $output += "`n`nNo shortcuts found."
         }
-        Update-Output $out
+
+        Update-Output $output
     } catch {
         Update-Output "Error analyzing MSI: $_"
     }
 }
 
-# Wire up buttons
+# Wire buttons
 $elements.FirewallSnapshotBefore.Add_Click({ Take-FirewallSnapshot $snapshotBeforeFirewall "Before" })
 $elements.FirewallSnapshotAfter.Add_Click({ Take-FirewallSnapshot $snapshotAfterFirewall "After" })
 $elements.FirewallCompare.Add_Click({ Compare-Snapshots $snapshotBeforeFirewall $snapshotAfterFirewall "Firewall" })
