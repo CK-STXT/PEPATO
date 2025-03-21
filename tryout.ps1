@@ -27,9 +27,10 @@ if (!(Test-Path $snapshotFolder)) { New-Item -ItemType Directory -Path $snapshot
 # Define the XAML layout for the GUI
 [xml]$XAML = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" 
-        Title="PerPac Tool (Running as SYSTEM)" Height="700" Width="600" ResizeMode="NoResize">
+        Title="PerPac Tool (Running as SYSTEM)" Height="750" Width="600" ResizeMode="NoResize">
     <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -67,11 +68,20 @@ if (!(Test-Path $snapshotFolder)) { New-Item -ItemType Directory -Path $snapshot
             </StackPanel>
         </GroupBox>
 
+        <!-- MSI Analysis Section -->
+        <GroupBox Header="MSI Analysis" Grid.Row="3" Margin="10">
+            <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
+                <Button Name="btnSelectMSI" Content="Select MSI" Width="200" Margin="5"/>
+                <TextBox Name="txtMSIPath" Width="450" Height="25" Margin="5" IsReadOnly="True"/>
+                <Button Name="btnAnalyzeMSI" Content="Analyze MSI" Width="200" Margin="5"/>
+            </StackPanel>
+        </GroupBox>
+
         <!-- Text Output for status messages -->
-        <TextBox Name="txtOutput" Width="550" Height="100" Margin="10" Grid.Row="3" IsReadOnly="True" VerticalAlignment="Top" HorizontalAlignment="Center" TextWrapping="Wrap"/>
+        <TextBox Name="txtOutput" Width="550" Height="120" Margin="10" Grid.Row="4" IsReadOnly="True" VerticalAlignment="Top" HorizontalAlignment="Center" TextWrapping="Wrap"/>
 
         <!-- Bottom Buttons -->
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Center">
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Center">
             <Button Name="btnOpenFolder" Content="Open Folder" Width="120" Margin="10"/>
             <Button Name="btnClose" Content="Close" Width="120" Margin="10"/>
         </StackPanel>
@@ -84,18 +94,9 @@ $reader = (New-Object System.Xml.XmlNodeReader $XAML)
 $window = [Windows.Markup.XamlReader]::Load($reader)
 
 # Find UI Elements
-$btnFirewallSnapshotBefore = $window.FindName("btnFirewallSnapshotBefore")
-$btnFirewallSnapshotAfter = $window.FindName("btnFirewallSnapshotAfter")
-$btnCompareFirewall = $window.FindName("btnCompareFirewall")
-$btnRegistrySnapshotBefore = $window.FindName("btnRegistrySnapshotBefore")
-$btnRegistrySnapshotAfter = $window.FindName("btnRegistrySnapshotAfter")
-$btnCompareRegistry = $window.FindName("btnCompareRegistry")
-$btnSelectExe = $window.FindName("btnSelectExe")
-$btnRunInstaller = $window.FindName("btnRunInstaller")
-$btnFindMSI = $window.FindName("btnFindMSI")
-$btnOpenFolder = $window.FindName("btnOpenFolder")
-$btnClose = $window.FindName("btnClose")
-$txtExePath = $window.FindName("txtExePath")
+$btnSelectMSI = $window.FindName("btnSelectMSI")
+$btnAnalyzeMSI = $window.FindName("btnAnalyzeMSI")
+$txtMSIPath = $window.FindName("txtMSIPath")
 $txtOutput = $window.FindName("txtOutput")
 
 # Function: Update Output Text
@@ -104,54 +105,54 @@ function Update-Output {
     $window.Dispatcher.Invoke([action] { $txtOutput.Text = $text })
 }
 
-# Firewall Snapshot Function
-function Take-FirewallSnapshot {
-    param($snapshotPath, $type)
-
-    Update-Output "Firewall snapshot ($type) started..."
-    netsh advfirewall firewall show rule name=all | Out-File -FilePath $snapshotPath -Encoding UTF8
-    Update-Output "Firewall snapshot ($type) saved to: $snapshotPath"
+# Function: Select MSI File
+function Select-MSI {
+    $dialog = New-Object System.Windows.Forms.OpenFileDialog
+    $dialog.Filter = "MSI Files (*.msi)|*.msi"
+    $dialog.ShowDialog() | Out-Null
+    if ($dialog.FileName) {
+        $txtMSIPath.Text = $dialog.FileName
+        Update-Output "Selected MSI: $($dialog.FileName)"
+    }
 }
 
-# Registry Snapshot Function
-function Take-RegistrySnapshot {
-    param($snapshotPath, $type)
+# Function: Analyze MSI File
+function Analyze-MSI {
+    if ([string]::IsNullOrEmpty($txtMSIPath.Text)) {
+        Update-Output "Please select an MSI file first."
+        return
+    }
 
-    Update-Output "Registry snapshot ($type) started..."
-    reg export "HKLM\Software" $snapshotPath /y
-    Update-Output "Registry snapshot ($type) saved to: $snapshotPath"
-}
+    $msiPath = $txtMSIPath.Text
+    Update-Output "Analyzing MSI properties..."
 
-# Function: Compare Firewall Snapshots
-function Compare-FirewallSnapshots {
-    Update-Output "Comparing Firewall snapshots..."
-    $before = Get-Content $snapshotBeforeFirewall
-    $after = Get-Content $snapshotAfterFirewall
-    $diff = Compare-Object -ReferenceObject $before -DifferenceObject $after
-    Update-Output "Firewall comparison complete!"
-}
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    $database = $installer.OpenDatabase($msiPath, 0)
 
-# Function: Compare Registry Snapshots
-function Compare-RegistrySnapshots {
-    Update-Output "Comparing Registry snapshots..."
-    $before = Get-Content $snapshotBeforeRegistry
-    $after = Get-Content $snapshotAfterRegistry
-    $diff = Compare-Object -ReferenceObject $before -DifferenceObject $after
-    Update-Output "Registry comparison complete!"
+    # Query for ProductCode, REBOOT, and ALLUSERS properties
+    $properties = @("ProductCode", "REBOOT", "ALLUSERS")
+    $results = @()
+
+    foreach ($property in $properties) {
+        $view = $database.OpenView("SELECT Value FROM Property WHERE Property = '$property'")
+        $view.Execute()
+        $record = $view.Fetch()
+        if ($record) {
+            $value = $record.StringData(1)
+            $results += "${property}: $value"
+        } else {
+            $results += "${property}: Not Found"
+        }
+        $view.Close()
+    }
+
+    # Display results
+    Update-Output "MSI Analysis Results:`n$($results -join "`n")"
 }
 
 # Button Click Events
-$btnFirewallSnapshotBefore.Add_Click({ Take-FirewallSnapshot $snapshotBeforeFirewall "Before" })
-$btnFirewallSnapshotAfter.Add_Click({ Take-FirewallSnapshot $snapshotAfterFirewall "After" })
-$btnCompareFirewall.Add_Click({ Compare-FirewallSnapshots })
-$btnRegistrySnapshotBefore.Add_Click({ Take-RegistrySnapshot $snapshotBeforeRegistry "Before" })
-$btnRegistrySnapshotAfter.Add_Click({ Take-RegistrySnapshot $snapshotAfterRegistry "After" })
-$btnCompareRegistry.Add_Click({ Compare-RegistrySnapshots })
-$btnSelectExe.Add_Click({ Select-Exe })
-$btnRunInstaller.Add_Click({ Run-Installer })
-$btnFindMSI.Add_Click({ Find-MSI })
-$btnOpenFolder.Add_Click({ Start-Process explorer.exe -ArgumentList $snapshotFolder })
-$btnClose.Add_Click({ $window.Close() })
+$btnSelectMSI.Add_Click({ Select-MSI })
+$btnAnalyzeMSI.Add_Click({ Analyze-MSI })
 
 # Show the GUI
 $window.ShowDialog()
