@@ -15,7 +15,7 @@ if (-not $isAdmin) {
 }
 
 # Output folder & timestamp
-$baseFolder = "C:\\temp\\PrePackTool"
+$baseFolder = "C:\temp\PrePackTool"
 if (!(Test-Path $baseFolder)) { New-Item -ItemType Directory -Path $baseFolder -Force }
 $timestamp = Get-Date -Format "dd_MM_yy"
 
@@ -129,13 +129,66 @@ function Take-RegistrySnapshot($path, $type) {
     Update-Output "Registry snapshot ($type) saved to: $path"
 }
 
+function Parse-NetshRuleToAddCommand($ruleOutput) {
+    $rule = @{}
+    foreach ($line in $ruleOutput) {
+        if ($line -match "^\s*(.+?):\s*(.+)$") {
+            $key = $matches[1].Trim()
+            $value = $matches[2].Trim()
+            $rule[$key] = $value
+        }
+    }
+
+    if ($rule["Rule Name"]) {
+        $cmd = "netsh advfirewall firewall add rule"
+        $cmd += " name=`"$($rule["Rule Name"])`""
+        if ($rule["Direction"])     { $cmd += " dir=$($rule["Direction"].ToLower())" }
+        if ($rule["Action"])        { $cmd += " action=$($rule["Action"].ToLower())" }
+        if ($rule["Enabled"])       { $cmd += " enable=$($rule["Enabled"].ToLower())" }
+        if ($rule["Protocol"])      { $cmd += " protocol=$($rule["Protocol"])" }
+        if ($rule["LocalPort"])     { $cmd += " localport=$($rule["LocalPort"])" }
+        if ($rule["RemotePort"])    { $cmd += " remoteport=$($rule["RemotePort"])" }
+        if ($rule["LocalIP"])       { $cmd += " localip=$($rule["LocalIP"])" }
+        if ($rule["RemoteIP"])      { $cmd += " remoteip=$($rule["RemoteIP"])" }
+        if ($rule["Profile"])       { $cmd += " profile=$($rule["Profile"].ToLower())" }
+        if ($rule["InterfaceType"]) { $cmd += " interfacetype=$($rule["InterfaceType"].ToLower())" }
+        return $cmd
+    }
+    return $null
+}
+
 function Compare-Snapshots($beforePath, $afterPath, $label) {
     if (!(Test-Path $beforePath) -or !(Test-Path $afterPath)) {
         Update-Output "$label snapshots not found!"
         return
     }
-    $diff = Compare-Object (Get-Content $beforePath) (Get-Content $afterPath)
-    if ($diff) {
+
+    $before = Get-Content $beforePath
+    $after = Get-Content $afterPath
+    $diff = Compare-Object $before $after -PassThru -IncludeEqual:$false
+
+    if ($label -eq "Firewall" -and $diff) {
+        $addedLines = $diff | Where-Object { $_.SideIndicator -eq "=>" }
+        $ruleNames = $addedLines | Where-Object { $_ -match "^Rule Name:\s*(.+)" } | ForEach-Object {
+            $matches[1].Trim()
+        } | Sort-Object -Unique
+
+        $commandLines = @()
+        foreach ($ruleName in $ruleNames) {
+            $ruleOutput = netsh advfirewall firewall show rule name="$ruleName"
+            $cmd = Parse-NetshRuleToAddCommand $ruleOutput
+            if ($cmd) { $commandLines += $cmd }
+        }
+
+        $diffPath = "$baseFolder\${label}_Differences_$timestamp.txt"
+        if ($commandLines.Count -gt 0) {
+            $commandLines | Out-File -FilePath $diffPath -Encoding UTF8
+            Update-Output "Firewall 'add rule' commands saved to: $diffPath"
+        } else {
+            Update-Output "No new firewall rules found."
+        }
+    }
+    elseif ($diff) {
         $diffPath = "$baseFolder\${label}_Differences_$timestamp.txt"
         $diff | Out-File -FilePath $diffPath -Encoding UTF8
         Update-Output "Differences saved to: $diffPath"
